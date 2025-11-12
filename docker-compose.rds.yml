@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: multiplayer-rds-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gameserver
+      POSTGRES_PASSWORD: gameserver_password
+      POSTGRES_DB: multiplayer_game
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - multiplayer-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gameserver"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  multiplayer-network:
+    name: multiplayer-network
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+

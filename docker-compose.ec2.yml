@@ -1,0 +1,49 @@
+services:
+  nextjs-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: multiplayer-ec2-nextjs
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://gameserver:gameserver_password@multiplayer-rds-postgres:5432/multiplayer_game?schema=public
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ec2-network
+      - multiplayer-network
+    command: sh -c "npx prisma migrate deploy && node server.js"
+
+  redis:
+    image: redis:7-alpine
+    container_name: multiplayer-ec2-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ec2-network
+
+networks:
+  ec2-network:
+    driver: bridge
+  multiplayer-network:
+    name: multiplayer-network
+    external: true
+
+volumes:
+  redis_data:
+    driver: local
+
