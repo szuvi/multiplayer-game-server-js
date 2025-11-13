@@ -63,8 +63,33 @@ export default function AdminPage() {
           setTimerState(data)
         })
 
+        // Initial games list on admin join
         socketInstance.on(BROADCAST_EVENTS.GAMES_LIST_UPDATE, (data: GameWithPlayers[]) => {
           setGames(data)
+        })
+
+        // Handle new game added
+        socketInstance.on(BROADCAST_EVENTS.ADMIN_GAME_ADDED, (game: GameWithPlayers) => {
+          setGames((prevGames) => [...prevGames, game])
+        })
+
+        // Handle individual game updates
+        socketInstance.on(BROADCAST_EVENTS.GAME_STATE_UPDATE, (updatedGame: GameWithPlayers) => {
+          setGames((prevGames) =>
+            prevGames.map((game) =>
+              game.id === updatedGame.id
+                ? {
+                    ...game,
+                    ...updatedGame,
+                    // Preserve enriched player stats from initial load
+                    player1TotalWins: game.player1TotalWins,
+                    player1TotalLosses: game.player1TotalLosses,
+                    player2TotalWins: game.player2TotalWins,
+                    player2TotalLosses: game.player2TotalLosses,
+                  }
+                : game
+            )
+          )
         })
 
         setSocket(socketInstance)

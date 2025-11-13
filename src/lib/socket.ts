@@ -14,6 +14,9 @@ const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379')
 let io: SocketIOServer | null = null
 let timerInterval: NodeJS.Timeout | null = null
 
+// Track admin sockets
+const adminSockets = new Set<string>()
+
 // Redis pub/sub clients
 const redisPub = new Redis({
   host: REDIS_HOST,
@@ -83,6 +86,20 @@ export const getIO = () => {
     throw new Error('Socket.io server not initialized')
   }
   return io
+}
+
+// Helper function to get all admin sockets
+function getAdminSockets(): Socket[] {
+  if (!io) return []
+
+  const sockets: Socket[] = []
+  for (const socketId of adminSockets) {
+    const socket = io.sockets.sockets.get(socketId)
+    if (socket) {
+      sockets.push(socket)
+    }
+  }
+  return sockets
 }
 
 // Redis pub/sub handlers
@@ -166,7 +183,7 @@ async function pauseAllGames() {
       )
     }
   }
-  await broadcastGamesList()
+  // No need to broadcast full games list - admins are subscribed to game rooms
 }
 
 async function activateAllGames() {
@@ -184,20 +201,44 @@ async function activateAllGames() {
       )
     }
   }
-  await broadcastGamesList()
+  // No need to broadcast full games list - admins are subscribed to game rooms
 }
 
 // Admin event handlers
 async function handleAdminJoin(socket: Socket) {
   socket.join(SOCKET_ROOMS.ADMIN)
+  adminSockets.add(socket.id)
   console.log(`👑 Admin joined: ${socket.id}`)
 
   // Send current state
   const timerState = await redisRepo.getTimerState()
   const games = await redisRepo.getAllGames()
 
+  // Subscribe admin to all non-ended game rooms
+  for (const game of games) {
+    if (game.status !== 'ended') {
+      socket.join(SOCKET_ROOMS.GAME(game.id))
+    }
+  }
+
+  // Enrich games with player stats for initial load
+  const enrichedGames = await Promise.all(
+    games.map(async (game) => {
+      const player1Stats = await redisRepo.getUserStats(game.player1Id)
+      const player2Stats = await redisRepo.getUserStats(game.player2Id)
+
+      return {
+        ...game,
+        player1TotalWins: player1Stats.wins,
+        player1TotalLosses: player1Stats.losses,
+        player2TotalWins: player2Stats.wins,
+        player2TotalLosses: player2Stats.losses,
+      }
+    })
+  )
+
   socket.emit(BROADCAST_EVENTS.TIMER_UPDATE, timerState)
-  socket.emit(BROADCAST_EVENTS.GAMES_LIST_UPDATE, games)
+  socket.emit(BROADCAST_EVENTS.GAMES_LIST_UPDATE, enrichedGames)
 }
 
 async function handleStartGame(socket: Socket) {
@@ -402,7 +443,27 @@ async function matchPlayer(socket: Socket, userId: string) {
       // Broadcast game state
       io?.to(SOCKET_ROOMS.GAME(gameId)).emit(BROADCAST_EVENTS.GAME_STATE_UPDATE, game)
 
-      await broadcastGamesList()
+      // Notify admins of new game and subscribe them to the game room
+      const adminSocketsList = getAdminSockets()
+      if (adminSocketsList.length > 0) {
+        // Enrich game data for admins
+        const player1Stats = await redisRepo.getUserStats(game.player1Id)
+        const player2Stats = await redisRepo.getUserStats(game.player2Id)
+
+        const enrichedGame = {
+          ...game,
+          player1TotalWins: player1Stats.wins,
+          player1TotalLosses: player1Stats.losses,
+          player2TotalWins: player2Stats.wins,
+          player2TotalLosses: player2Stats.losses,
+        }
+
+        // Subscribe all admins to the new game room and notify them
+        for (const adminSocket of adminSocketsList) {
+          adminSocket.join(SOCKET_ROOMS.GAME(gameId))
+          adminSocket.emit(BROADCAST_EVENTS.ADMIN_GAME_ADDED, enrichedGame)
+        }
+      }
     }
   } else {
     // Add to waiting queue
@@ -478,12 +539,18 @@ async function handleMakeMove(socket: Socket, data: { gameId: string; position: 
     JSON.stringify({ gameId, game })
   )
 
-  await broadcastGamesList()
+  // No need to broadcast full games list - admins are subscribed to game rooms
 }
 
 async function handleDisconnect(socket: Socket) {
   const userId = socket.data.userId
   console.log(`❌ Client disconnected: ${socket.id}`)
+
+  // Remove from admin sockets if they were an admin
+  if (adminSockets.has(socket.id)) {
+    adminSockets.delete(socket.id)
+    console.log(`👑 Admin disconnected: ${socket.id}`)
+  }
 
   if (userId) {
     // Note: We don't remove the user or their game on disconnect

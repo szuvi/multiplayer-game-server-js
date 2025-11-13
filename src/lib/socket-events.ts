@@ -33,5 +33,6 @@ export const BROADCAST_EVENTS = {
   GAME_MATCHED: 'game:matched',
   GAME_ENDED: 'game:ended',
   USER_LOGIN_RESPONSE: 'user:loginResponse',
+  ADMIN_GAME_ADDED: 'admin:gameAdded',
 } as const
 
